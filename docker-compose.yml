@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  chromadb:
+    image: ghcr.io/chroma-core/chroma:0.5.0
+    ports:
+      - "8001:8000"
+    environment:
+      - IS_PERSISTENT=true
+      - ANONYMIZED_TELEMETRY=false
+    volumes:
+      - chroma-data:/chroma/chroma
+
+volumes:
+  chroma-data:
