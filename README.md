@@ -160,7 +160,146 @@ Organize o projeto com os seguintes arquivos principais (conforme fornecido ante
       ```
       Models: Estruturas de dados que representam objetos de negócio. São utilizados para transferência de dados dentro do sistema.
       ```
+## Estrutura do Projeto
+```
+ia-agent/
+├── src/
+│   ├── main/
+│   │   ├── java/com/github/mwacha/
+│   │   │   ├── controller/
+│   │   │   │   └── DocumentController.java
+│   │   │   ├── services/
+│   │   │   │   ├── ChromaClient.java
+│   │   │   │   ├── DocumentStoreService.java
+│   │   │   │   ├── EmbeddingService.java
+│   │   │   │   └── OllamaClient.java
+│   │   │   └── IAAgentApplication.java
+│   │   └── resources/
+│   │       └── application.yml
+│   └── test/
+│       └── java/com/github/mwacha/
+│           ├── controller/
+│           │   └── DocumentControllerIntegrationTest.java
+│           └── services/
+│               ├── ChromaClientTest.java
+│               ├── DocumentStoreServiceTest.java
+│               ├── EmbeddingServiceTest.java
+│               └── OllamaClientTest.java
+├── pom.xml
+└── README.md
+```
 
+## Fluxo de Classes e Arquitetura
+
+### Fluxo de Classes
+A aplicação segue uma arquitetura em camadas com responsabilidades claras para cada componente. Abaixo está o fluxo de interações entre as principais classes:
+
+1. **DocumentController**:
+    - Ponto de entrada para requisições da API REST.
+    - Gerencia o endpoint `/api/upload` (POST) para receber `MultipartFile` e delega ao `DocumentStoreService`.
+    - Gerencia o endpoint `/api/ask` (GET) para processar consultas, delegando ao `DocumentStoreService` para recuperação de documentos e ao `OllamaClient` para geração de respostas.
+
+2. **DocumentStoreService**:
+    - Gerencia o armazenamento e a recuperação de documentos.
+    - Extrai texto de arquivos usando PDFBox (PDF) ou POI (DOCX).
+    - Divide o texto em pedaços (`chunkText`) com um limite máximo de tokens.
+    - Gera embeddings para os pedaços via `EmbeddingService` e armazena no ChromaDB via `ChromaClient`.
+    - Recupera documentos relevantes para consultas usando `ChromaClient` e embeddings de consulta do `EmbeddingService`.
+
+3. **EmbeddingService**:
+    - Gera embeddings para pedaços de texto.
+    - Chama a API do Ollama (modelo `snowflake-arctic-embed2`) usando `WebClient` para converter texto em arrays de `float`.
+
+4. **ChromaClient**:
+    - Interage com o banco de vetores ChromaDB.
+    - Inicializa uma coleção (`init`).
+    - Armazena documentos e embeddings (`addDocument`).
+    - Consulta documentos relevantes (`queryRelevant`) com base em embeddings.
+
+5. **OllamaClient**:
+    - Interage com o modelo de linguagem Ollama (`gemma2`).
+    - Gera respostas combinando consultas do usuário com documentos relevantes via `WebClient`.
+
+### Fluxo de Operações
+- **Upload de Documento**:
+    1. `DocumentController` recebe um arquivo via `/api/upload`.
+    2. `DocumentStoreService` extrai o texto e divide em pedaços.
+    3. `EmbeddingService` gera embeddings para cada pedaço.
+    4. `ChromaClient` armazena os pedaços e embeddings no ChromaDB.
+- **Consulta**:
+    1. `DocumentController` recebe uma consulta via `/api/ask`.
+    2. `EmbeddingService` gera um embedding para a consulta.
+    3. `DocumentStoreService` usa `ChromaClient` para recuperar documentos relevantes.
+    4. `OllamaClient` gera uma resposta usando a consulta e os documentos recuperados.
+
+### Diagrama Arquitetural
+Abaixo está um diagrama em Mermaid ilustrando a arquitetura e as interações entre os componentes.
+
+```mermaid
+classDiagram
+    class DocumentController {
+        +uploadFile(MultipartFile) ResponseEntity
+        +askQuestion(String) String
+    }
+    class DocumentStoreService {
+        +storeDocument(MultipartFile)
+        +queryDocuments(String) List~String~
+        -extractText(MultipartFile) String
+        -chunkText(String, int) List~String~
+    }
+    class EmbeddingService {
+        +embed(String) float[]
+    }
+    class ChromaClient {
+        +init()
+        +addDocument(String, float[])
+        +queryRelevant(String, float[]) List~String~
+    }
+    class OllamaClient {
+        +ask(String) String
+    }
+    class ChromaDB {
+        <<externo>>
+    }
+    class Ollama {
+        <<externo>>
+    }
+
+    DocumentController --> DocumentStoreService
+    DocumentController --> OllamaClient
+    DocumentStoreService --> EmbeddingService
+    DocumentStoreService --> ChromaClient
+    EmbeddingService --> Ollama
+    ChromaClient --> ChromaDB
+    OllamaClient --> Ollama
+```
+## Testes
+### Testes Unitários
+- **ChromaClientTest**: Testa a interação com o ChromaDB (WebClient mockado).
+- **EmbeddingServiceTest**: Testa a geração de embeddings (WebClient mockado).
+- **OllamaClientTest**: Testa a geração de respostas (WebClient mockado).
+- **DocumentStoreServiceTest**: Testa a extração de texto, divisão em pedaços e armazenamento de documentos (dependências mockadas).
+
+### Testes de Integração
+- **DocumentControllerIntegrationTest**: Testa o fluxo completo (upload e consulta) usando Testcontainers para o ChromaDB e uma instância do Ollama em execução.
+
+Execute os testes:
+```bash
+mvn test
+```
+
+## Dependências
+- **Spring Boot 3.2.5**: WebFlux para API reativa.
+- **Apache PDFBox 2.0.27**: Extração de texto de PDF.
+- **Apache POI 5.2.3**: Extração de texto de DOCX.
+- **Testcontainers 1.20.1**: ChromaDB nos testes de integração.
+- **Mockito 5.12.0**: Mocking nos testes unitários.
+
+## Configuração
+Edite `src/main/resources/application.yml` para configurar:
+- **URL do Ollama**: Padrão `http://localhost:11434`.
+- **URL do ChromaDB**: Padrão `http://localhost:8000`.
+- **Nome da Coleção**: Padrão `my_collection`.
 ## Problemas Encontrados
 1. **Respostas Truncadas do Ollama**:
     - **Problema**: Modelos (`llama3`, `mistral`, `gemma2`) retornavam respostas parciais como `"According"`, `"Mod"`, ou `"E"`.
